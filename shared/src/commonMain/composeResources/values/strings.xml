@@ -703,6 +703,7 @@
     <string name="room_link_unknown">Not a direct media link. Playback may fail.</string>
     <string name="room_link_play_anyway">Play anyway</string>
     <string name="room_link_paste">Paste</string>
+    <string name="room_link_buffer_ahead">Download ahead while playing</string>
     <string name="media_folders">Media folders</string>
     <!-- %1$s is the app name, Synkplay. -->
     <string name="media_folders_brief">%1$s looks in these folders for a file a shared playlist names. Small folders are faster.</string>

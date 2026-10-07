@@ -3,6 +3,7 @@ package app.player.exo
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.util.TypedValue
 import android.view.LayoutInflater
 import androidx.annotation.UiThread
@@ -49,9 +50,12 @@ import app.utils.playableUri
 import app.utils.uri
 import io.github.vinceglb.filekit.PlatformFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Collections
+import java.io.InterruptedIOException
 import kotlin.math.roundToInt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -61,6 +65,39 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
 
     var exoplayer: ExoPlayer? = null
     private lateinit var exoView: PlayerView
+    private var bufferAheadJob: Job? = null
+    @Volatile private var bufferAheadSession: ExoBufferAhead? = null
+
+    override fun canBufferAhead(url: String): Boolean =
+        runCatching { ExoMediaCache.supports(Uri.parse(url)) }.getOrDefault(false)
+
+    override fun bufferAheadCurrentMedia() {
+        val url = (viewmodel.media?.location as? MediaFileLocation.Remote)?.url ?: return
+        if (!canBufferAhead(url)) return
+        cancelBufferAhead()
+        val session = ExoBufferAhead(contextObtainer(), Uri.parse(url))
+        bufferAheadSession = session
+        bufferAheadJob = playerScopeIO.launch {
+            try {
+                session.cache()
+            } catch (_: InterruptedIOException) {
+                // Replacing the file or reaching the cache budget stops the writer.
+            } catch (_: CancellationException) {
+                // The player or room was closed.
+            } catch (error: Exception) {
+                loggy("Buffer ahead stopped: ${error.message}")
+            } finally {
+                if (bufferAheadSession === session) bufferAheadSession = null
+            }
+        }
+    }
+
+    private fun cancelBufferAhead() {
+        bufferAheadSession?.cancel()
+        bufferAheadSession = null
+        bufferAheadJob?.cancel()
+        bufferAheadJob = null
+    }
 
     override val supportsVideoTrackSelection = true
 
@@ -193,6 +230,7 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                cancelBufferAhead()
                 loggy("Player error: ${error.errorCodeName} ${error.message ?: ""}")
                 val reason = error.errorCodeName
                 viewmodel.dispatchOSD(OSDCategory.WARNING) { Localization.strings.roomPlaybackError(reason) }
@@ -210,6 +248,7 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
 
     override suspend fun destroy() {
         if (!isInitialized) return
+        cancelBufferAhead()
         // Reset the guard and cancel the 500 ms position tracker before releasing the player.
         // Exo polls a nullable instance, so it does not crash like mpv's global handle. But a live
         // tracker keeps polling a released player and keeps the captured RoomViewmodel in memory.
@@ -480,6 +519,7 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
     }
 
     override suspend fun injectVideoFileImpl(location: MediaFileLocation.Local) {
+        cancelBufferAhead()
         if (!isInitialized) return
 
         val vid = MediaItem.Builder()
@@ -492,6 +532,7 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
     }
 
     override suspend fun injectVideoURLImpl(location: MediaFileLocation.Remote) {
+        cancelBufferAhead()
         val vid = MediaItem.Builder()
             .setUri(location.url)
             .setMediaId(location.url)

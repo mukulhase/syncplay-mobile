@@ -86,6 +86,10 @@ abstract class PlayerImpl(val viewmodel: RoomViewmodel, val engine: PlayerEngine
     open val supportsVideoTrackSelection: Boolean = false
     open val supportsAudioVisualization: Boolean = false
 
+    /** Optional cache-ahead action for progressive network video. */
+    open fun canBufferAhead(url: String): Boolean = false
+    open fun bufferAheadCurrentMedia() = Unit
+
     /** The audio visualizer's controls while it draws, null otherwise. Only KitePlayer has them. */
     open val visualizer: StateFlow<VisualizerControls?> = MutableStateFlow(null)
 

@@ -17,7 +17,8 @@ import java.io.File
 
 @OptIn(UnstableApi::class)
 internal object ExoMediaCache {
-    private const val MAX_BYTES = 512L * 1024L * 1024L
+    private const val MAX_BYTES = 2L * 1024L * 1024L * 1024L
+    const val AHEAD_LIMIT_BYTES = MAX_BYTES - 256L * 1024L * 1024L
     private var instance: SimpleCache? = null
 
     @Synchronized
@@ -31,11 +32,15 @@ internal object ExoMediaCache {
         (uri.scheme == "http" || uri.scheme == "https") &&
             Util.inferContentType(uri) == C.CONTENT_TYPE_OTHER
 
-    fun mediaSourceFactory(context: Context): DefaultMediaSourceFactory {
+    fun cacheDataSourceFactory(context: Context): CacheDataSource.Factory {
         val http = DefaultHttpDataSource.Factory()
-        val cachedHttp = CacheDataSource.Factory()
+        return CacheDataSource.Factory()
             .setCache(cache(context))
             .setUpstreamDataSourceFactory(http)
+    }
+
+    fun mediaSourceFactory(context: Context): DefaultMediaSourceFactory {
+        val cachedHttp = cacheDataSourceFactory(context)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
         return DefaultMediaSourceFactory(context)
             .setDataSourceFactory(DefaultDataSource.Factory(context, cachedHttp))
