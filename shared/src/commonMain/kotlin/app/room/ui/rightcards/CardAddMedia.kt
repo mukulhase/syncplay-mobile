@@ -9,12 +9,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.runtime.Composable
@@ -40,7 +46,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.viewModelScope
 import app.LocalRoomUiState
@@ -62,6 +70,7 @@ import app.uicomponents.controls.RowGap
 import app.uicomponents.controls.SecondaryAction
 import app.uicomponents.controls.Text
 import app.uicomponents.controls.FontSizeRange
+import app.uicomponents.controls.controlStates
 import app.uicomponents.frames.PanelFrame
 import app.utils.Platform
 import app.utils.platform
@@ -207,8 +216,10 @@ object CardAddMedia {
         var preview by remember { mutableStateOf<ResolvedMedia?>(null) }
         var resolving by remember { mutableStateOf(false) }
         var failed by remember { mutableStateOf(false) }
+        var bufferAhead by remember { mutableStateOf(false) }
         val trimmed = url.trim()
         val kind = remember(trimmed, resolverOn) { recognise(trimmed, resolverOn) }
+        val canBufferAhead = trimmed.isNotBlank() && viewmodel.player.canBufferAhead(trimmed)
 
         LaunchedEffect(trimmed, kind) {
             preview = null
@@ -223,8 +234,12 @@ object CardAddMedia {
         }
 
         fun play() {
+            val shouldBufferAhead = bufferAhead && canBufferAhead
             onPlayed()
-            if (trimmed.isNotBlank()) viewmodel.viewModelScope.launch { viewmodel.player.injectVideoURL(trimmed) }
+            if (trimmed.isNotBlank()) viewmodel.viewModelScope.launch {
+                viewmodel.player.injectVideoURL(trimmed)
+                if (shouldBufferAhead) viewmodel.player.bufferAheadCurrentMedia()
+            }
         }
 
         Column(Modifier.fillMaxWidth().padding(Space.gutter)) {
@@ -264,6 +279,32 @@ object CardAddMedia {
                 modifier = Modifier.padding(top = Space.gapTight),
             )
             if (resolving) ProgressBar(null, Modifier.fillMaxWidth().padding(top = Space.gapTight))
+            if (canBufferAhead) {
+                val interaction = remember { MutableInteractionSource() }
+                Row(
+                    Modifier.fillMaxWidth()
+                        .heightIn(min = Space.row)
+                        .toggleable(
+                            value = bufferAhead,
+                            role = Role.Checkbox,
+                            interactionSource = interaction,
+                            indication = null,
+                        ) { bufferAhead = it }
+                        .hoverable(interaction)
+                        .controlStates(interaction, RectangleShape, selected = bufferAhead)
+                        .padding(horizontal = Space.gapTight),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        if (bufferAhead) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                        contentDescription = null,
+                        tint = if (bufferAhead) p.accent else p.inkDim,
+                        modifier = Modifier.size(Space.glyph),
+                    )
+                    Spacer(Modifier.size(Space.gap))
+                    Text(strings.roomLinkBufferAhead, style = Type.label, color = p.ink)
+                }
+            }
             Spacer(Modifier.height(Space.gutter))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SecondaryAction(strings.cancel, modifier = Modifier.weight(1f), onClick = onCancel)
