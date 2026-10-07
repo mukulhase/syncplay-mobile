@@ -24,8 +24,6 @@ import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.cache.CacheWriter
 import android.media.audiofx.LoudnessEnhancer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -54,12 +52,10 @@ import io.github.vinceglb.filekit.PlatformFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Collections
 import java.io.InterruptedIOException
-import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -70,7 +66,7 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
     var exoplayer: ExoPlayer? = null
     private lateinit var exoView: PlayerView
     private var bufferAheadJob: Job? = null
-    @Volatile private var bufferAheadWriter: CacheWriter? = null
+    @Volatile private var bufferAheadSession: ExoBufferAhead? = null
 
     override fun canBufferAhead(url: String): Boolean =
         runCatching { ExoMediaCache.supports(Uri.parse(url)) }.getOrDefault(false)
@@ -79,24 +75,11 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
         val url = (viewmodel.media?.location as? MediaFileLocation.Remote)?.url ?: return
         if (!canBufferAhead(url)) return
         cancelBufferAhead()
+        val session = ExoBufferAhead(contextObtainer(), Uri.parse(url))
+        bufferAheadSession = session
         bufferAheadJob = playerScopeIO.launch {
-            var writer: CacheWriter? = null
             try {
-                val dataSource = ExoMediaCache.cacheDataSourceFactory(contextObtainer())
-                    .createDataSourceForDownloading()
-                lateinit var currentWriter: CacheWriter
-                currentWriter = CacheWriter(
-                    dataSource,
-                    DataSpec(Uri.parse(url)),
-                    null,
-                    CacheWriter.ProgressListener { _, bytesCached, _ ->
-                        if (bytesCached >= ExoMediaCache.AHEAD_LIMIT_BYTES) currentWriter.cancel()
-                    },
-                )
-                writer = currentWriter
-                bufferAheadWriter = currentWriter
-                coroutineContext.ensureActive()
-                currentWriter.cache()
+                session.cache()
             } catch (_: InterruptedIOException) {
                 // Replacing the file or reaching the cache budget stops the writer.
             } catch (_: CancellationException) {
@@ -104,13 +87,14 @@ class ExoImpl(vm: RoomViewmodel) : PlayerImpl(vm, ExoEngine) {
             } catch (error: Exception) {
                 loggy("Buffer ahead stopped: ${error.message}")
             } finally {
-                if (bufferAheadWriter === writer) bufferAheadWriter = null
+                if (bufferAheadSession === session) bufferAheadSession = null
             }
         }
     }
 
     private fun cancelBufferAhead() {
-        bufferAheadWriter?.cancel()
+        bufferAheadSession?.cancel()
+        bufferAheadSession = null
         bufferAheadJob?.cancel()
         bufferAheadJob = null
     }
